@@ -1,0 +1,1 @@
+FrameID,Type,PacketRatio(%),FwdRef,BwdRef,RefStatus,EffectiveRatio(%),Latency(ms),WithinDeadline,FirstArrival(sec),LastArrival(sec)

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./ns3 build:*)",
+      "Bash(./ns3 run:*)",
+      "Bash(timeout 30 ./ns3 run:*)",
+      "Bash(python3:*)",
+      "Bash(gnuplot:*)",
+      "Bash(make:*)",
+      "Bash(./ns3 clean:*)",
+      "Bash(./ns3 configure:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
