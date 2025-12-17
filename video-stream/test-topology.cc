@@ -5,20 +5,92 @@
 #include "ns3/wifi-module.h"
 #include "ns3/mobility-module.h"
 #include "ns3/applications-module.h"
+#include "ns3/flow-monitor-helper.h"
+#include "ns3/ipv4-flow-classifier.h"
+#include "ns3/ampdu-tag.h"
+#include "ns3/ampdu-subframe-header.h"
+#include "ns3/wifi-mac-header.h"
+#include "ns3/qos-utils.h"
 #include "video-frame.h"
 
 using namespace ns3;
 
+// A-MPDU と EDCA 状態を記録するためのログファイル
+std::ofstream g_qosLogFile;
+
+// Access Category の名前
+const char* GetAcName(AcIndex ac) {
+    switch (ac) {
+        case AC_BE: return "AC_BE";
+        case AC_BK: return "AC_BK";
+        case AC_VI: return "AC_VI";
+        case AC_VO: return "AC_VO";
+        default: return "AC_UNKNOWN";
+    }
+}
+
+// PHY 層受信トレースコールバック
+void PhyRxTrace(std::string context, Ptr<const Packet> packet,
+                uint16_t channelFreqMhz, WifiTxVector txVector,
+                MpduInfo aMpdu, SignalNoiseDbm signalNoise, uint16_t staId)
+{
+    // A-MPDU 情報
+    bool isAmpdu = (aMpdu.type != 0);
+    uint32_t ampduRefNum = aMpdu.mpduRefNumber;
+
+    // パケットのコピーを作成
+    Ptr<Packet> pktCopy = packet->Copy();
+
+    // A-MPDU サブフレームヘッダを処理
+    if (txVector.IsAggregation()) {
+        AmpduSubframeHeader subHdr;
+        pktCopy->RemoveHeader(subHdr);
+        uint32_t length = subHdr.GetLength();
+        pktCopy = pktCopy->CreateFragment(0, length);
+    }
+
+    // WiFi MAC ヘッダを取得
+    WifiMacHeader hdr;
+    pktCopy->PeekHeader(hdr);
+
+    // QoS 情報を取得
+    if (hdr.IsQosData()) {
+        uint8_t tid = hdr.GetQosTid();
+        AcIndex ac = QosUtilsMapTidToAc(tid);
+
+        // VideoFrameTag を取得（フレーム情報用）
+        VideoFrameTag vTag;
+        uint32_t frameId = 0;
+        uint32_t frameType = 0;
+        uint32_t packetIndex = 0;
+        if (pktCopy->PeekPacketTag(vTag)) {
+            frameId = vTag.GetFrameId();
+            frameType = vTag.GetFrameType();
+            packetIndex = vTag.GetPacketIndex();
+        }
+
+        // ログファイルに記録
+        if (g_qosLogFile.is_open()) {
+            const char* frameTypeStr[] = {"I", "P", "B"};
+            g_qosLogFile << Simulator::Now().GetSeconds() << ","
+                        << frameId << ","
+                        << frameTypeStr[frameType] << ","
+                        << packetIndex << ","
+                        << (int)tid << ","
+                        << GetAcName(ac) << ","
+                        << (isAmpdu ? "YES" : "NO") << ","
+                        << ampduRefNum << std::endl;
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
-    // ======================
-    // コマンドライン引数
-    // ======================
-    bool enableAmpdu = true;
-    bool enableEdca = true;
-    uint32_t packetSize = 1400;
-    uint32_t gopSize = 12;
+    bool enableAmpdu = false;
+    bool enableEdca = false;
+    uint32_t packetSize = 1472;
+    uint32_t gopSize = 60;
     double distance = 20.0;
-    double simulationTime = 2.0;
+    double simulationTime = 10.0;
     std::string outputDir = "/Users/akira/workspace/ns-3.46.1/scratch/video-sim-log";
 
     CommandLine cmd;
@@ -32,6 +104,8 @@ int main(int argc, char *argv[]) {
     cmd.Parse(argc, argv);
 
     LogComponentEnable("VideoFrame", LOG_LEVEL_INFO);
+    LogComponentEnable("UdpServer", LOG_LEVEL_INFO);
+    LogComponentEnable("UdpClient", LOG_LEVEL_INFO);
     Time::SetResolution(Time::NS);
 
     // 設定を表示
@@ -44,9 +118,7 @@ int main(int argc, char *argv[]) {
     std::cout << "Simulation Time: " << simulationTime << " s" << std::endl;
     std::cout << "================================\n" << std::endl;
 
-    // ======================
     // ノード作成
-    // ======================
     NodeContainer server;
     server.Create(1);
 
@@ -56,22 +128,18 @@ int main(int argc, char *argv[]) {
     NodeContainer sta;
     sta.Create(1);
 
-    // ======================
     // 有線リンク（サーバー - AP）
-    // ======================
     PointToPointHelper p2p;
     p2p.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
     p2p.SetChannelAttribute("Delay", StringValue("1ms"));
     NetDeviceContainer p2pDevices = p2p.Install(server.Get(0), ap.Get(0));
 
-    // ======================
     // WiFi（AP - STA）ダウンリンク方向
-    // ======================
     WifiHelper wifi;
-    wifi.SetStandard(WIFI_STANDARD_80211ac);
-    wifi.SetRemoteStationManager("ns3::MinstrelHtWifiManager");
+    wifi.SetStandard(WIFI_STANDARD_80211be);
+    wifi.SetRemoteStationManager("ns3::IdealWifiManager");  // SNR-based rate control
 
-    // WiFiチャネル
+    // WiFiチャネル（2.4GHz, 20MHz帯域幅）
     YansWifiChannelHelper channel;
     channel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
     channel.AddPropagationLoss("ns3::LogDistancePropagationLossModel",
@@ -81,6 +149,7 @@ int main(int argc, char *argv[]) {
     YansWifiPhyHelper phy;
     phy.SetChannel(channel.Create());
     phy.SetErrorRateModel("ns3::YansErrorRateModel");
+    phy.Set("ChannelSettings", StringValue("{0, 20, BAND_2_4GHZ, 0}"));  // 2.4GHz, 20MHz
 
     WifiMacHelper mac;
     Ssid ssid = Ssid("video-network");
@@ -107,9 +176,7 @@ int main(int argc, char *argv[]) {
                 "VO_MaxAmpduSize", UintegerValue(ampduSize));
     NetDeviceContainer staDevice = wifi.Install(phy, mac, sta.Get(0));
 
-    // ======================
     // モビリティ（位置設定）
-    // ======================
     MobilityHelper mobility;
     mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel");
 
@@ -125,9 +192,7 @@ int main(int argc, char *argv[]) {
     mobility.SetPositionAllocator(staPos);
     mobility.Install(sta);
 
-    // ======================
     // IPアドレス設定
-    // ======================
     InternetStackHelper stack;
     stack.Install(server);
     stack.Install(ap);
@@ -146,14 +211,52 @@ int main(int argc, char *argv[]) {
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    // ======================
-    // アプリケーション設定
-    // ダウンリンク: サーバー → STA
-    // ======================
+    // デバッグ: IPアドレスの確認
+    std::cout << "\n=== IP Address Assignment ===" << std::endl;
+    for (uint32_t i = 0; i < server.GetN(); i++) {
+        Ptr<Ipv4> ipv4 = server.Get(i)->GetObject<Ipv4>();
+        std::cout << "Server " << i << " addresses:" << std::endl;
+        for (uint32_t j = 0; j < ipv4->GetNInterfaces(); j++) {
+            std::cout << "  Interface " << j << ": " << ipv4->GetAddress(j, 0).GetLocal() << std::endl;
+        }
+    }
+    for (uint32_t i = 0; i < ap.GetN(); i++) {
+        Ptr<Ipv4> ipv4 = ap.Get(i)->GetObject<Ipv4>();
+        std::cout << "AP " << i << " addresses:" << std::endl;
+        for (uint32_t j = 0; j < ipv4->GetNInterfaces(); j++) {
+            std::cout << "  Interface " << j << ": " << ipv4->GetAddress(j, 0).GetLocal() << std::endl;
+        }
+    }
+    for (uint32_t i = 0; i < sta.GetN(); i++) {
+        Ptr<Ipv4> ipv4 = sta.Get(i)->GetObject<Ipv4>();
+        std::cout << "STA " << i << " addresses:" << std::endl;
+        for (uint32_t j = 0; j < ipv4->GetNInterfaces(); j++) {
+            std::cout << "  Interface " << j << ": " << ipv4->GetAddress(j, 0).GetLocal() << std::endl;
+        }
+    }
 
+    // ルーティングテーブル表示
+    std::cout << "\n=== Routing Tables ===" << std::endl;
+    for (uint32_t i = 0; i < server.GetN(); i++) {
+        Ptr<Ipv4> ipv4 = server.Get(i)->GetObject<Ipv4>();
+        std::cout << "Server " << i << " has routing protocol: " << (ipv4->GetRoutingProtocol() ? "YES" : "NO") << std::endl;
+    }
+    std::cout << "=====================\n" << std::endl;
+
+    // アプリケーション設定
     // 受信アプリ（WiFi STA側）
     Ptr<VideoFrameReceiverApplication> receiver = CreateObject<VideoFrameReceiverApplication>();
     receiver->SetPort(9);
+
+    // パケットログファイル設定
+    std::string ampduStrLog = enableAmpdu ? "on" : "off";
+    std::string edcaStrLog = enableEdca ? "on" : "off";
+    std::ostringstream packetLogPath;
+    packetLogPath << outputDir << "/packet_log_ampdu_" << ampduStrLog
+                  << "_edca_" << edcaStrLog
+                  << "_d" << static_cast<int>(distance) << "m.csv";
+    receiver->SetPacketLogFile(packetLogPath.str());
+
     sta.Get(0)->AddApplication(receiver);
     receiver->SetStartTime(Seconds(0.5));
     receiver->SetStopTime(Seconds(simulationTime));
@@ -167,18 +270,56 @@ int main(int argc, char *argv[]) {
     sender->SetFrameInterval(Seconds(0.033));  // 30fps
     sender->SetEdcaEnabled(enableEdca);  // EDCA有効/無効
     server.Get(0)->AddApplication(sender);
-    sender->SetStartTime(Seconds(1.0));
+    sender->SetStartTime(Seconds(3.0));
     sender->SetStopTime(Seconds(simulationTime));
 
-    // ======================
+    // QoS ログファイルを開く
+    std::string ampduStrQos = enableAmpdu ? "on" : "off";
+    std::string edcaStrQos = enableEdca ? "on" : "off";
+    std::ostringstream qosLogPath;
+    qosLogPath << outputDir << "/qos_log_ampdu_" << ampduStrQos
+              << "_edca_" << edcaStrQos
+              << "_d" << static_cast<int>(distance) << "m.csv";
+
+    g_qosLogFile.open(qosLogPath.str());
+    if (g_qosLogFile.is_open()) {
+        // ヘッダ行を書き込み
+        g_qosLogFile << "Time(sec),FrameID,FrameType,PacketIndex,TID,AccessCategory,IsAMPDU,AMPDURefNum" << std::endl;
+        std::cout << "QoS log file: " << qosLogPath.str() << std::endl;
+    }
+
+    // PHY 層の受信トレースを接続（STA 側のみ）
+    Config::Connect("/NodeList/" + std::to_string(sta.Get(0)->GetId()) +
+                    "/DeviceList/*/$ns3::WifiNetDevice/Phy/$ns3::WifiPhy/MonitorSnifferRx",
+                    MakeCallback(&PhyRxTrace));
+
+    // Flow Monitor設定
+    FlowMonitorHelper flowmon;
+    Ptr<FlowMonitor> monitor = flowmon.InstallAll();
+
     // シミュレーション実行
-    // ======================
     Simulator::Stop(Seconds(simulationTime + 1.0));
     Simulator::Run();
 
-    // ======================
+    // Flow Monitor統計出力
+    monitor->CheckForLostPackets();
+    Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmon.GetClassifier());
+    FlowMonitor::FlowStatsContainer stats = monitor->GetFlowStats();
+
+    std::cout << "\n=== Flow Monitor Statistics ===" << std::endl;
+    uint32_t totalPackets = 0;
+    uint32_t totalRxPackets = 0;
+    for (auto it = stats.begin(); it != stats.end(); it++) {
+        totalPackets += it->second.txPackets;
+        totalRxPackets += it->second.rxPackets;
+        std::cout << "Flow " << it->first << ":" << std::endl
+                  << "  Tx Packets: " << it->second.txPackets << std::endl
+                  << "  Rx Packets: " << it->second.rxPackets << std::endl;
+    }
+    std::cout << "Total Tx: " << totalPackets << ", Total Rx: " << totalRxPackets << std::endl;
+    std::cout << "============================\n" << std::endl;
+
     // 結果出力
-    // ======================
     std::string ampduStr = enableAmpdu ? "on" : "off";
     std::string edcaStr = enableEdca ? "on" : "off";
     std::ostringstream csvPath;
@@ -196,6 +337,12 @@ int main(int argc, char *argv[]) {
     std::cout << "Distance: " << distance << " m" << std::endl;
     std::cout << "Output: " << csvPath.str() << std::endl;
     std::cout << "==========================\n" << std::endl;
+
+    // QoS ログファイルを閉じる
+    if (g_qosLogFile.is_open()) {
+        g_qosLogFile.close();
+        std::cout << "QoS log saved to: " << qosLogPath.str() << std::endl;
+    }
 
     Simulator::Destroy();
     return 0;

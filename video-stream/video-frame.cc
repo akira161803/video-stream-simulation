@@ -4,9 +4,6 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE("VideoFrame");
 
-// ========================================
-// VideoFrameTag Implementation
-// ========================================
 TypeId VideoFrameTag::GetTypeId() {
     static TypeId tid = TypeId("ns3::VideoFrameTag")
         .SetParent<Tag>()
@@ -69,9 +66,7 @@ int32_t VideoFrameTag::GetForwardRefFrameId() const { return m_forwardRefFrameId
 int32_t VideoFrameTag::GetBackwardRefFrameId() const { return m_backwardRefFrameId; }
 double VideoFrameTag::GetTransmissionStartTime() const { return m_transmissionStartTime; }
 
-// ========================================
 // VideoFrameSenderApplication Implementation
-// ========================================
 TypeId VideoFrameSenderApplication::GetTypeId() {
     static TypeId tid = TypeId("ns3::VideoFrameSenderApplication")
         .SetParent<Application>()
@@ -114,8 +109,12 @@ void VideoFrameSenderApplication::SetEdcaEnabled(bool enabled) {
 
 uint32_t VideoFrameSenderApplication::GetFrameType(uint32_t frameNum) {
     uint32_t pos = frameNum % m_gopSize;
-    if (pos == 0) return 0;  // I frame
-    if (pos % 3 == 0) return 1;  // P frame
+
+    // GOP 60 with last frame as P-frame
+    // Pattern: I B B P B B P B B P ... P (59 frames, then repeat)
+    if (pos == 0) return 0;  // I frame at position 0
+    if (pos == m_gopSize - 1) return 1;  // P frame at last position (59)
+    if (pos % 3 == 0) return 1;  // P frame at positions 3, 6, 9, ..., 57
     return 2;  // B frame
 }
 
@@ -125,11 +124,11 @@ uint32_t VideoFrameSenderApplication::GetFramePackets(uint32_t frameType) {
         case 0:  // I frame
             return 50;
         case 1:  // P frame
-            return 20;
+            return 30;
         case 2:  // B frame
-            return 10;
+            return 5;
         default:
-            return 10;
+            return 5;
     }
 }
 
@@ -142,8 +141,6 @@ int32_t VideoFrameSenderApplication::GetForwardRefFrameId(uint32_t frameNum, uin
 
     uint32_t gopPos = frameNum % m_gopSize;
 
-    // GOP構造: I B B P B B P B B P B B
-    // 位置:    0 1 2 3 4 5 6 7 8 9 10 11
 
     // 直前のI/Pフレーム位置を計算
     uint32_t prevKeyPos;
@@ -151,11 +148,6 @@ int32_t VideoFrameSenderApplication::GetForwardRefFrameId(uint32_t frameNum, uin
         // 位置1,2（最初のP(3)より前）はI(0)を参照
         prevKeyPos = 0;
     } else {
-        // 位置3以降は直前のPを参照
-        // gopPos=3 -> prevKeyPos=0 (I)
-        // gopPos=4,5 -> prevKeyPos=3 (P)
-        // gopPos=6 -> prevKeyPos=3 (P)
-        // gopPos=7,8 -> prevKeyPos=6 (P)
         prevKeyPos = ((gopPos - 1) / 3) * 3;
         if (prevKeyPos == 0) {
             prevKeyPos = 0;  // Iフレーム
@@ -174,8 +166,6 @@ int32_t VideoFrameSenderApplication::GetBackwardRefFrameId(uint32_t frameNum, ui
 
     uint32_t gopPos = frameNum % m_gopSize;
 
-    // GOP構造: I B B P B B P B B P B B
-    // 次のI/P位置を計算
     uint32_t nextKeyPos = ((gopPos / 3) + 1) * 3;
     if (nextKeyPos >= m_gopSize) {
         // GOPの最後のBフレームは次のGOPのIフレームを参照
@@ -191,10 +181,15 @@ void VideoFrameSenderApplication::StartApplication() {
         m_socket = Socket::CreateSocket(GetNode(), tid);
         m_socket->Bind();
         m_socket->Connect(InetSocketAddress(m_peerAddress, m_peerPort));
+        NS_LOG_INFO("Sender connecting to " << m_peerAddress << ":" << m_peerPort);
     }
 
+    // Send warmup packets to initialize WiFi MAC layer
+    SendWarmupPackets();
+
     m_frameNum = 0;
-    m_sendEvent = Simulator::Schedule(Seconds(0.0), &VideoFrameSenderApplication::GenerateFrame, this);
+    // Delay first frame generation to allow warmup packets to be processed
+    m_sendEvent = Simulator::Schedule(MilliSeconds(10), &VideoFrameSenderApplication::GenerateFrame, this);
 }
 
 void VideoFrameSenderApplication::StopApplication() {
@@ -204,6 +199,36 @@ void VideoFrameSenderApplication::StopApplication() {
     if (m_socket) {
         m_socket->Close();
     }
+}
+
+void VideoFrameSenderApplication::SendWarmupPackets() {
+    const uint32_t warmupCount = 10;  // Number of warmup packets
+    NS_LOG_INFO("Sending " << warmupCount << " warmup packets to initialize WiFi MAC layer");
+
+    // If EDCA is enabled, set high priority for warmup packets to match I-frame priority
+    if (m_edcaEnabled) {
+        m_socket->SetIpTos(0xb8);  // AC_VI (Video)
+    }
+
+    for (uint32_t i = 0; i < warmupCount; i++) {
+        // Create packet with standard size
+        Ptr<Packet> packet = Create<Packet>(m_packetSize);
+
+        // Add VideoFrameTag to identify warmup packets (frameId = -1 for warmup)
+        double txStartTime = Simulator::Now().GetSeconds();
+        VideoFrameTag tag(static_cast<uint32_t>(-1), 0, i, warmupCount, -1, -1, txStartTime);
+        packet->AddPacketTag(tag);
+
+        int ret = m_socket->Send(packet);
+        if (ret < 0) {
+            NS_LOG_ERROR("Failed to send warmup packet " << i << ": " << ret);
+        } else {
+            NS_LOG_INFO("Sent warmup packet " << i << "/" << warmupCount
+                       << " at " << Simulator::Now().GetSeconds() << "s");
+        }
+    }
+
+    NS_LOG_INFO("Warmup packets sent. WiFi MAC layer should be initialized.");
 }
 
 void VideoFrameSenderApplication::GenerateFrame() {
@@ -218,6 +243,15 @@ void VideoFrameSenderApplication::GenerateFrame() {
                << " (" << framePackets << " packets, fwdRef=" << fwdRefFrameId
                << ", bwdRef=" << bwdRefFrameId << ")");
 
+    // EDCA優先度制御: フレームタイプに応じてTOSを設定
+    if (m_edcaEnabled) {
+        if (frameType == 0) {
+            m_socket->SetIpTos(0xb8);  // I frame: AC_VI (Video, TOS=0xb8)
+        } else {
+            m_socket->SetIpTos(0x70);  // P/B frame: AC_BE (Best Effort, TOS=0x70)
+        }
+    }
+
     // フレームの全パケットをバースト的に送信
     for (uint32_t i = 0; i < framePackets; i++) {
         // パケットを作成（実際のペイロードはm_packetSizeバイト）
@@ -227,22 +261,15 @@ void VideoFrameSenderApplication::GenerateFrame() {
         VideoFrameTag tag(m_frameNum, frameType, i, framePackets, fwdRefFrameId, bwdRefFrameId, txStartTime);
         packet->AddPacketTag(tag);
 
-        // EDCA優先度制御: SocketPriorityTagを使用してWiFi MAC層に優先度を指定
-        if (m_edcaEnabled) {
-            // I フレーム: Priority=5 (AC_VI, Video, 高優先度)
-            // P/B フレーム: Priority=0 (AC_BE, Best Effort)
-            SocketPriorityTag priorityTag;
-            if (frameType == 0) {
-                priorityTag.SetPriority(5);  // AC_VI
-            } else {
-                priorityTag.SetPriority(0);  // AC_BE
-            }
-            packet->AddPacketTag(priorityTag);
-        }
-
         int ret = m_socket->Send(packet);
         if (ret < 0) {
             NS_LOG_ERROR("Failed to send packet: " << ret);
+        } else {
+            // パケット送信成功をログ出力
+            const char* frameTypeStr[] = {"I", "P", "B"};
+            NS_LOG_INFO("Sent packet: " << frameTypeStr[frameType] << " frame " << m_frameNum
+                       << " packet " << i << "/" << framePackets
+                       << " at " << Simulator::Now().GetSeconds() << "s");
         }
     }
 
@@ -250,9 +277,7 @@ void VideoFrameSenderApplication::GenerateFrame() {
     m_sendEvent = Simulator::Schedule(m_frameInterval, &VideoFrameSenderApplication::GenerateFrame, this);
 }
 
-// ========================================
 // VideoFrameReceiverApplication Implementation
-// ========================================
 TypeId VideoFrameReceiverApplication::GetTypeId() {
     static TypeId tid = TypeId("ns3::VideoFrameReceiverApplication")
         .SetParent<Application>()
@@ -262,7 +287,7 @@ TypeId VideoFrameReceiverApplication::GetTypeId() {
 }
 
 VideoFrameReceiverApplication::VideoFrameReceiverApplication()
-    : m_port(0) {
+    : m_port(0), m_packetLogFile("") {
 }
 
 VideoFrameReceiverApplication::~VideoFrameReceiverApplication() {
@@ -270,6 +295,34 @@ VideoFrameReceiverApplication::~VideoFrameReceiverApplication() {
 
 void VideoFrameReceiverApplication::SetPort(uint16_t port) {
     m_port = port;
+}
+
+void VideoFrameReceiverApplication::SetPacketLogFile(std::string filename) {
+    m_packetLogFile = filename;
+    m_packetLogStream.open(filename);
+    if (m_packetLogStream.is_open()) {
+        // ヘッダ行を書き込み
+        m_packetLogStream << "TxTime(sec),RxTime(sec),Latency(ms),FrameID,FrameType,PacketIndex,TotalPackets,FwdRef,BwdRef" << std::endl;
+        m_packetLogStream.flush();
+    }
+}
+
+void VideoFrameReceiverApplication::LogPacket(uint32_t frameId, uint32_t frameType, uint32_t packetIndex,
+                                              uint32_t totalPackets, double txTime, double rxTime, int32_t fwdRef, int32_t bwdRef) {
+    if (m_packetLogStream.is_open()) {
+        const char* frameTypeStr[] = {"I", "P", "B"};
+        double latency = (rxTime - txTime) * 1000.0;  // ミリ秒に変換
+        m_packetLogStream << std::fixed << std::setprecision(6) << txTime << ","
+                          << std::fixed << std::setprecision(6) << rxTime << ","
+                          << std::fixed << std::setprecision(3) << latency << ","
+                          << frameId << ","
+                          << frameTypeStr[frameType] << ","
+                          << packetIndex << ","
+                          << totalPackets << ","
+                          << fwdRef << ","
+                          << bwdRef << std::endl;
+        m_packetLogStream.flush();
+    }
 }
 
 void VideoFrameReceiverApplication::StartApplication() {
@@ -281,6 +334,11 @@ void VideoFrameReceiverApplication::StartApplication() {
         if (m_socket->Bind(local) == -1) {
             NS_FATAL_ERROR("Failed to bind socket");
         }
+
+        // ソケット受信バッファサイズを増加（デフォルト131072→1048576）
+        m_socket->SetAttribute("RcvBufSize", UintegerValue(1048576));
+
+        NS_LOG_INFO("Receiver bound to port " << m_port);
         m_socket->SetRecvCallback(MakeCallback(&VideoFrameReceiverApplication::HandleRead, this));
     }
 }
@@ -290,23 +348,44 @@ void VideoFrameReceiverApplication::StopApplication() {
         m_socket->Close();
         m_socket->SetRecvCallback(MakeNullCallback<void, Ptr<Socket>>());
     }
+    if (m_packetLogStream.is_open()) {
+        m_packetLogStream.close();
+    }
 }
 
 void VideoFrameReceiverApplication::HandleRead(Ptr<Socket> socket) {
     Ptr<Packet> packet;
     Address from;
     double rxTime = Simulator::Now().GetSeconds();
+    uint32_t totalPacketsReceived = 0;
+    static uint32_t firstPacketSize = 0;  // Record the first packet size
 
     while ((packet = socket->RecvFrom(from))) {
+        totalPacketsReceived++;
+
+        // Log packet size for the first packet received
+        if (firstPacketSize == 0) {
+            firstPacketSize = packet->GetSize();
+            NS_LOG_INFO("===== First packet received: Size = " << firstPacketSize << " bytes =====");
+        }
+
         // VideoFrameTagからメタデータを取得
         VideoFrameTag tag;
         if (packet->PeekPacketTag(tag)) {
             uint32_t frameId = tag.GetFrameId();
             uint32_t frameType = tag.GetFrameType();
+            uint32_t packetIndex = tag.GetPacketIndex();
             uint32_t totalPackets = tag.GetTotalPackets();
             int32_t fwdRefFrameId = tag.GetForwardRefFrameId();
             int32_t bwdRefFrameId = tag.GetBackwardRefFrameId();
             double txStartTime = tag.GetTransmissionStartTime();
+
+            // Skip warmup packets (frameId = -1) from statistics
+            if (frameId == static_cast<uint32_t>(-1)) {
+                NS_LOG_INFO("Received warmup packet " << packetIndex << "/" << totalPackets
+                           << " (ignored for statistics)");
+                continue;
+            }
 
             // フレーム情報の初期化
             if (m_frameStats.find(frameId) == m_frameStats.end()) {
@@ -335,9 +414,23 @@ void VideoFrameReceiverApplication::HandleRead(Ptr<Socket> socket) {
 
             const char* frameTypeStr[] = {"I", "P", "B"};
             NS_LOG_INFO("Received packet from " << frameTypeStr[frameType] << " frame " << frameId
+                       << " packet " << packetIndex << "/" << totalPackets
                        << " (" << m_frameStats[frameId].receivedPackets << "/" << totalPackets
                        << ", fwdRef=" << fwdRefFrameId << ", bwdRef=" << bwdRefFrameId << ")");
+
+            // パケットログに出力（送信時間と受信時間を記録）
+            LogPacket(frameId, frameType, packetIndex, totalPackets, txStartTime, rxTime, fwdRefFrameId, bwdRefFrameId);
+
+            // ロスパケット検出
+            if (frameId == 0 && packetIndex < 3) {
+                NS_LOG_WARN("Frame 0 packet " << packetIndex << " received (first frame analysis)");
+            }
+        } else {
+            NS_LOG_WARN("Packet received without VideoFrameTag at " << rxTime << "s");
         }
+    }
+    if (totalPacketsReceived > 0) {
+        NS_LOG_INFO("HandleRead received " << totalPacketsReceived << " packets at " << rxTime << "s, total frames: " << m_frameStats.size());
     }
 }
 

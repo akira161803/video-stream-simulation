@@ -18,9 +18,7 @@
 
 using namespace ns3;
 
-// ========================================
 // VideoFrameTag: フレーム情報を保持
-// ========================================
 class VideoFrameTag : public Tag {
 public:
     static TypeId GetTypeId();
@@ -53,9 +51,7 @@ private:
     double m_transmissionStartTime;  // フレーム送信開始時刻 (秒)
 };
 
-// ========================================
 // FrameStatistics: 各フレーム統計情報
-// ========================================
 struct FrameStatistics {
     uint32_t frameId;
     uint32_t frameType;
@@ -74,9 +70,7 @@ struct FrameStatistics {
     bool withinDeadline;  // 許容遅延内かどうか (30fps = 33.3ms)
 };
 
-// ========================================
 // VideoFrameSenderApplication: 送信アプリ
-// ========================================
 class VideoFrameSenderApplication : public Application {
 public:
     static TypeId GetTypeId();
@@ -94,6 +88,7 @@ private:
     virtual void StartApplication();
     virtual void StopApplication();
 
+    void SendWarmupPackets();
     void GenerateFrame();
     uint32_t GetFrameType(uint32_t frameNum);
     uint32_t GetFramePackets(uint32_t frameType);
@@ -111,9 +106,7 @@ private:
     bool m_edcaEnabled;
 };
 
-// ========================================
 // VideoFrameReceiverApplication: 受信アプリ
-// ========================================
 class VideoFrameReceiverApplication : public Application {
 public:
     static TypeId GetTypeId();
@@ -121,6 +114,7 @@ public:
     virtual ~VideoFrameReceiverApplication();
 
     void SetPort(uint16_t port);
+    void SetPacketLogFile(std::string filename);
     void PrintStatistics();
     void SaveStatisticsToFile(std::string filename);
 
@@ -130,10 +124,14 @@ private:
 
     void HandleRead(Ptr<Socket> socket);
     void CalculateStatistics();
+    void LogPacket(uint32_t frameId, uint32_t frameType, uint32_t packetIndex,
+                   uint32_t totalPackets, double txTime, double rxTime, int32_t fwdRef, int32_t bwdRef);
 
     Ptr<Socket> m_socket;
     uint16_t m_port;
     std::map<uint32_t, FrameStatistics> m_frameStats;
+    std::string m_packetLogFile;
+    std::ofstream m_packetLogStream;
 };
 
 #endif // VIDEO_FRAME_H
