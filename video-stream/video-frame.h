@@ -89,6 +89,15 @@ private:
     virtual void StopApplication();
 
     void SendWarmupPackets();
+    void SendOnePacket(
+        uint32_t frameNum,
+        uint32_t frameType,
+        uint32_t packetIndex,
+        uint32_t framePackets,
+        int32_t fwdRefFrameId,
+        int32_t bwdRefFrameId,
+        double txStartTime
+    );
     void GenerateFrame();
     uint32_t GetFrameType(uint32_t frameNum);
     uint32_t GetFramePackets(uint32_t frameType);
@@ -104,6 +113,7 @@ private:
     EventId m_sendEvent;
     uint32_t m_frameNum;
     bool m_edcaEnabled;
+    Time m_packetGap;
 };
 
 // VideoFrameReceiverApplication: 受信アプリ

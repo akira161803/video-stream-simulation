@@ -76,7 +76,7 @@ TypeId VideoFrameSenderApplication::GetTypeId() {
 }
 
 VideoFrameSenderApplication::VideoFrameSenderApplication()
-    : m_peerPort(0), m_packetSize(512), m_gopSize(12), m_frameNum(0), m_edcaEnabled(true) {
+    : m_peerPort(0), m_packetSize(512), m_gopSize(12), m_frameNum(0), m_edcaEnabled(true), m_packetGap(MicroSeconds(10)) {
     m_frameInterval = Seconds(0.033);  // 30fps
 }
 
@@ -231,50 +231,79 @@ void VideoFrameSenderApplication::SendWarmupPackets() {
     NS_LOG_INFO("Warmup packets sent. WiFi MAC layer should be initialized.");
 }
 
-void VideoFrameSenderApplication::GenerateFrame() {
+void
+VideoFrameSenderApplication::SendOnePacket(
+    uint32_t frameNum,
+    uint32_t frameType,
+    uint32_t packetIndex,
+    uint32_t framePackets,
+    int32_t fwdRefFrameId,
+    int32_t bwdRefFrameId,
+    double txStartTime)
+{
+    Ptr<Packet> packet = Create<Packet>(m_packetSize);
+
+    VideoFrameTag tag(frameNum, frameType, packetIndex,
+                      framePackets, fwdRefFrameId,
+                      bwdRefFrameId, txStartTime);
+    packet->AddPacketTag(tag);
+
+    int ret = m_socket->Send(packet);
+    if (ret < 0) {
+        NS_LOG_ERROR("Failed to send packet " << packetIndex);
+    } else {
+        const char* frameTypeStr[] = {"I", "P", "B"};
+        NS_LOG_INFO("Sent packet: " << frameTypeStr[frameType]
+                    << " frame " << frameNum
+                    << " packet " << packetIndex << "/" << framePackets
+                    << " at " << Simulator::Now().GetSeconds() << "s");
+    }
+}
+
+void
+VideoFrameSenderApplication::GenerateFrame()
+{
     uint32_t frameType = GetFrameType(m_frameNum);
     uint32_t framePackets = GetFramePackets(frameType);
     int32_t fwdRefFrameId = GetForwardRefFrameId(m_frameNum, frameType);
     int32_t bwdRefFrameId = GetBackwardRefFrameId(m_frameNum, frameType);
     const char* frameTypeStr[] = {"I", "P", "B"};
-    double txStartTime = Simulator::Now().GetSeconds();  // フレーム送信開始時刻
+    double txStartTime = Simulator::Now().GetSeconds();
 
-    NS_LOG_INFO("Generating " << frameTypeStr[frameType] << " frame " << m_frameNum
-               << " (" << framePackets << " packets, fwdRef=" << fwdRefFrameId
-               << ", bwdRef=" << bwdRefFrameId << ")");
+    NS_LOG_INFO("Generating " << frameTypeStr[frameType]
+                << " frame " << m_frameNum
+                << " (" << framePackets << " packets)");
 
-    // EDCA優先度制御: フレームタイプに応じてTOSを設定
+    // EDCA優先度制御
     if (m_edcaEnabled) {
         if (frameType == 0) {
-            m_socket->SetIpTos(0xb8);  // I frame: AC_VI (Video, TOS=0xb8)
+            m_socket->SetIpTos(0xb8);  // AC_VI
         } else {
-            m_socket->SetIpTos(0x70);  // P/B frame: AC_BE (Best Effort, TOS=0x70)
+            m_socket->SetIpTos(0x70);  // AC_BE
         }
     }
 
-    // フレームの全パケットをバースト的に送信
+    // ★ 修正点：パケットを時間差でスケジューリング
     for (uint32_t i = 0; i < framePackets; i++) {
-        // パケットを作成（実際のペイロードはm_packetSizeバイト）
-        Ptr<Packet> packet = Create<Packet>(m_packetSize);
-
-        // VideoFrameTagを付加（メタデータ）
-        VideoFrameTag tag(m_frameNum, frameType, i, framePackets, fwdRefFrameId, bwdRefFrameId, txStartTime);
-        packet->AddPacketTag(tag);
-
-        int ret = m_socket->Send(packet);
-        if (ret < 0) {
-            NS_LOG_ERROR("Failed to send packet: " << ret);
-        } else {
-            // パケット送信成功をログ出力
-            const char* frameTypeStr[] = {"I", "P", "B"};
-            NS_LOG_INFO("Sent packet: " << frameTypeStr[frameType] << " frame " << m_frameNum
-                       << " packet " << i << "/" << framePackets
-                       << " at " << Simulator::Now().GetSeconds() << "s");
-        }
+        Simulator::Schedule(
+            m_packetGap * i,
+            &VideoFrameSenderApplication::SendOnePacket,
+            this,
+            m_frameNum,
+            frameType,
+            i,
+            framePackets,
+            fwdRefFrameId,
+            bwdRefFrameId,
+            txStartTime
+        );
     }
 
     m_frameNum++;
-    m_sendEvent = Simulator::Schedule(m_frameInterval, &VideoFrameSenderApplication::GenerateFrame, this);
+    m_sendEvent = Simulator::Schedule(
+        m_frameInterval,
+        &VideoFrameSenderApplication::GenerateFrame,
+        this);
 }
 
 // VideoFrameReceiverApplication Implementation
