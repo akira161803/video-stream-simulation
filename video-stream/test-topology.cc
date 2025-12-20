@@ -18,16 +18,6 @@ using namespace ns3;
 // A-MPDU と EDCA 状態を記録するためのログファイル
 std::ofstream g_qosLogFile;
 
-// Access Category の名前
-const char* GetAcName(AcIndex ac) {
-    switch (ac) {
-        case AC_BE: return "AC_BE";
-        case AC_BK: return "AC_BK";
-        case AC_VI: return "AC_VI";
-        case AC_VO: return "AC_VO";
-        default: return "AC_UNKNOWN";
-    }
-}
 
 // PHY 層受信トレースコールバック
 void PhyRxTrace(std::string context, Ptr<const Packet> packet,
@@ -77,7 +67,7 @@ void PhyRxTrace(std::string context, Ptr<const Packet> packet,
                         << frameTypeStr[frameType] << ","
                         << packetIndex << ","
                         << (int)tid << ","
-                        << GetAcName(ac) << ","
+                        << ac << ","
                         << (isAmpdu ? "YES" : "NO") << ","
                         << ampduRefNum << std::endl;
         }
@@ -156,24 +146,26 @@ int main(int argc, char *argv[]) {
 
     // A-MPDUサイズの設定
     uint32_t ampduSize = enableAmpdu ? 65535 : 0;
+    uint32_t VO_MaxAmpduSize = enableAmpdu ? 1000000 : 0;
+    uint32_t BE_MaxAmpduSize = enableAmpdu ? 65535 : 0;
 
     // AP設定
     mac.SetType("ns3::ApWifiMac",
                 "Ssid", SsidValue(ssid),
-                "BE_MaxAmpduSize", UintegerValue(ampduSize),
+                "BE_MaxAmpduSize", UintegerValue(BE_MaxAmpduSize),
                 "BK_MaxAmpduSize", UintegerValue(ampduSize),
                 "VI_MaxAmpduSize", UintegerValue(ampduSize),
-                "VO_MaxAmpduSize", UintegerValue(ampduSize));
+                "VO_MaxAmpduSize", UintegerValue(VO_MaxAmpduSize));
     NetDeviceContainer apDevice = wifi.Install(phy, mac, ap.Get(0));
 
     // STA設定
     mac.SetType("ns3::StaWifiMac",
                 "Ssid", SsidValue(ssid),
                 "ActiveProbing", BooleanValue(false),
-                "BE_MaxAmpduSize", UintegerValue(ampduSize),
+                "BE_MaxAmpduSize", UintegerValue(BE_MaxAmpduSize),
                 "BK_MaxAmpduSize", UintegerValue(ampduSize),
                 "VI_MaxAmpduSize", UintegerValue(ampduSize),
-                "VO_MaxAmpduSize", UintegerValue(ampduSize));
+                "VO_MaxAmpduSize", UintegerValue(VO_MaxAmpduSize));
     NetDeviceContainer staDevice = wifi.Install(phy, mac, sta.Get(0));
 
     // モビリティ（位置設定）
@@ -284,7 +276,7 @@ int main(int argc, char *argv[]) {
     g_qosLogFile.open(qosLogPath.str());
     if (g_qosLogFile.is_open()) {
         // ヘッダ行を書き込み
-        g_qosLogFile << "Time(sec),FrameID,FrameType,PacketIndex,TID,AccessCategory,IsAMPDU,AMPDURefNum" << std::endl;
+        g_qosLogFile << "PhyRxTime,FrameID,FrameType,PacketIndex,TID,AccessCategory,IsAMPDU,AMPDURefNum" << std::endl;
         std::cout << "QoS log file: " << qosLogPath.str() << std::endl;
     }
 
