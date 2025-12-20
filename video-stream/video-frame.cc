@@ -277,7 +277,7 @@ VideoFrameSenderApplication::GenerateFrame()
     // EDCA優先度制御
     if (m_edcaEnabled) {
         if (frameType == 0) {
-            m_socket->SetIpTos(0xb8);  // AC_VI
+            m_socket->SetIpTos(0xe0);  // AC_VO
         } else {
             m_socket->SetIpTos(0x70);  // AC_BE
         }
