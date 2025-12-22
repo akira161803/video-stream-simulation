@@ -77,7 +77,7 @@ void PhyRxTrace(std::string context, Ptr<const Packet> packet,
 int main(int argc, char *argv[]) {
     bool enableAmpdu = false;
     bool enableEdca = false;
-    uint32_t packetSize = 1472;
+    uint32_t packetSize = 1400;
     uint32_t gopSize = 60;
     double distance = 20.0;
     double simulationTime = 10.0;
@@ -127,7 +127,11 @@ int main(int argc, char *argv[]) {
     // WiFi（AP - STA）ダウンリンク方向
     WifiHelper wifi;
     wifi.SetStandard(WIFI_STANDARD_80211be);
-    wifi.SetRemoteStationManager("ns3::IdealWifiManager");  // SNR-based rate control
+    wifi.SetRemoteStationManager(
+            "ns3::ConstantRateWifiManager",
+            "DataMode", StringValue("EhtMcs8"),
+            "ControlMode", StringValue("EhtMcs0")  // 制御フレームは通常低MCS
+            );
 
     // WiFiチャネル（2.4GHz, 20MHz帯域幅）
     YansWifiChannelHelper channel;
@@ -146,8 +150,8 @@ int main(int argc, char *argv[]) {
 
     // A-MPDUサイズの設定
     uint32_t ampduSize = enableAmpdu ? 65535 : 0;
-    uint32_t VO_MaxAmpduSize = enableAmpdu ? 1000000 : 0;
-    uint32_t BE_MaxAmpduSize = enableAmpdu ? 65535 : 0;
+    uint32_t VO_MaxAmpduSize = enableAmpdu ? 15000000 : 0;
+    uint32_t BE_MaxAmpduSize = enableAmpdu ? 15000000 : 0;
 
     // AP設定
     mac.SetType("ns3::ApWifiMac",
