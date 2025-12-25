@@ -135,16 +135,12 @@ int main(int argc, char *argv[]) {
 //            );
 
     // WiFiチャネル（2.4GHz, 20MHz帯域幅）
-    YansWifiChannelHelper channel;
-    channel.SetPropagationDelay("ns3::ConstantSpeedPropagationDelayModel");
-    channel.AddPropagationLoss("ns3::LogDistancePropagationLossModel",
-                              "Exponent", DoubleValue(3.0),
-                              "ReferenceDistance", DoubleValue(1.0));
+    YansWifiChannelHelper channel = YansWifiChannelHelper::Default();
 
     YansWifiPhyHelper phy;
     phy.SetChannel(channel.Create());
-    phy.SetErrorRateModel("ns3::YansErrorRateModel");
     phy.Set("ChannelSettings", StringValue("{0, 20, BAND_2_4GHZ, 0}"));  // 2.4GHz, 20MHz
+    phy.SetErrorRateModel("ns3::YansErrorRateModel");
 
     WifiMacHelper mac;
     Ssid ssid = Ssid("video-network");
