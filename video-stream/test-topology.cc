@@ -127,11 +127,12 @@ int main(int argc, char *argv[]) {
     // WiFi（AP - STA）ダウンリンク方向
     WifiHelper wifi;
     wifi.SetStandard(WIFI_STANDARD_80211be);
-    wifi.SetRemoteStationManager(
-            "ns3::ConstantRateWifiManager",
-            "DataMode", StringValue("EhtMcs8"),
-            "ControlMode", StringValue("EhtMcs0")  // 制御フレームは通常低MCS
-            );
+    wifi.SetRemoteStationManager ("ns3::IdealWifiManager");
+//    wifi.SetRemoteStationManager(
+//            "ns3::ConstantRateWifiManager",
+//            "DataMode", StringValue("EhtMcs8"),
+//            "ControlMode", StringValue("EhtMcs0")  // 制御フレームは通常低MCS
+//            );
 
     // WiFiチャネル（2.4GHz, 20MHz帯域幅）
     YansWifiChannelHelper channel;
