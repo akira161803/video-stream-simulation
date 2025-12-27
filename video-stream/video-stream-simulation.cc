@@ -7,72 +7,11 @@
 #include "ns3/applications-module.h"
 #include "ns3/flow-monitor-helper.h"
 #include "ns3/ipv4-flow-classifier.h"
-#include "ns3/ampdu-tag.h"
-#include "ns3/ampdu-subframe-header.h"
-#include "ns3/wifi-mac-header.h"
-#include "ns3/qos-utils.h"
 #include "video-frame.h"
+#include "log.h"
+
 
 using namespace ns3;
-
-// A-MPDU と EDCA 状態を記録するためのログファイル
-std::ofstream g_qosLogFile;
-
-
-// PHY 層受信トレースコールバック
-void PhyRxTrace(std::string context, Ptr<const Packet> packet,
-                uint16_t channelFreqMhz, WifiTxVector txVector,
-                MpduInfo aMpdu, SignalNoiseDbm signalNoise, uint16_t staId)
-{
-    // A-MPDU 情報
-    bool isAmpdu = (aMpdu.type != 0);
-    uint32_t ampduRefNum = aMpdu.mpduRefNumber;
-
-    // パケットのコピーを作成
-    Ptr<Packet> pktCopy = packet->Copy();
-
-    // A-MPDU サブフレームヘッダを処理
-    if (txVector.IsAggregation()) {
-        AmpduSubframeHeader subHdr;
-        pktCopy->RemoveHeader(subHdr);
-        uint32_t length = subHdr.GetLength();
-        pktCopy = pktCopy->CreateFragment(0, length);
-    }
-
-    // WiFi MAC ヘッダを取得
-    WifiMacHeader hdr;
-    pktCopy->PeekHeader(hdr);
-
-    // QoS 情報を取得
-    if (hdr.IsQosData()) {
-        uint8_t tid = hdr.GetQosTid();
-        AcIndex ac = QosUtilsMapTidToAc(tid);
-
-        // VideoFrameTag を取得（フレーム情報用）
-        VideoFrameTag vTag;
-        uint32_t frameId = 0;
-        uint32_t frameType = 0;
-        uint32_t packetIndex = 0;
-        if (pktCopy->PeekPacketTag(vTag)) {
-            frameId = vTag.GetFrameId();
-            frameType = vTag.GetFrameType();
-            packetIndex = vTag.GetPacketIndex();
-        }
-
-        // ログファイルに記録
-        if (g_qosLogFile.is_open()) {
-            const char* frameTypeStr[] = {"I", "P", "B"};
-            g_qosLogFile << Simulator::Now().GetSeconds() << ","
-                        << frameId << ","
-                        << frameTypeStr[frameType] << ","
-                        << packetIndex << ","
-                        << (int)tid << ","
-                        << ac << ","
-                        << (isAmpdu ? "YES" : "NO") << ","
-                        << ampduRefNum << std::endl;
-        }
-    }
-}
 
 int main(int argc, char *argv[]) {
     bool enableAmpdu = false;
