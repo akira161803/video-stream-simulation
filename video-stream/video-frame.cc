@@ -561,5 +561,4 @@ void VideoFrameReceiverApplication::SaveStatisticsToFile(std::string filename) {
 
     outfile.close();
     NS_LOG_INFO("Statistics saved to: " << filename);
-    std::cout << "\nStatistics saved to: " << filename << std::endl;
 }

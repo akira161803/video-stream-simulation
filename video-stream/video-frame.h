@@ -125,7 +125,6 @@ public:
 
     void SetPort(uint16_t port);
     void SetPacketLogFile(std::string filename);
-    void PrintStatistics();
     void SaveStatisticsToFile(std::string filename);
 
 private:

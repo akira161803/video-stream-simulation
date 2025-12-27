@@ -37,16 +37,6 @@ int main(int argc, char *argv[]) {
     //LogComponentEnable("UdpClient", LOG_LEVEL_INFO);
     Time::SetResolution(Time::NS);
 
-    // 設定を表示
-    std::cout << "\n=== Simulation Configuration ===" << std::endl;
-    std::cout << "A-MPDU: " << (enableAmpdu ? "ON" : "OFF") << std::endl;
-    std::cout << "EDCA: " << (enableEdca ? "ON" : "OFF") << std::endl;
-    std::cout << "Packet Size: " << packetSize << " bytes" << std::endl;
-    std::cout << "GOP Size: " << gopSize << std::endl;
-    std::cout << "Distance: " << distance << " m" << std::endl;
-    std::cout << "Simulation Time: " << simulationTime << " s" << std::endl;
-    std::cout << "================================\n" << std::endl;
-
     // ノード作成
     NodeContainer server;
     server.Create(1);
@@ -143,37 +133,6 @@ int main(int argc, char *argv[]) {
 
     Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-    // デバッグ: IPアドレスの確認
-    std::cout << "\n=== IP Address Assignment ===" << std::endl;
-    for (uint32_t i = 0; i < server.GetN(); i++) {
-        Ptr<Ipv4> ipv4 = server.Get(i)->GetObject<Ipv4>();
-        std::cout << "Server " << i << " addresses:" << std::endl;
-        for (uint32_t j = 0; j < ipv4->GetNInterfaces(); j++) {
-            std::cout << "  Interface " << j << ": " << ipv4->GetAddress(j, 0).GetLocal() << std::endl;
-        }
-    }
-    for (uint32_t i = 0; i < ap.GetN(); i++) {
-        Ptr<Ipv4> ipv4 = ap.Get(i)->GetObject<Ipv4>();
-        std::cout << "AP " << i << " addresses:" << std::endl;
-        for (uint32_t j = 0; j < ipv4->GetNInterfaces(); j++) {
-            std::cout << "  Interface " << j << ": " << ipv4->GetAddress(j, 0).GetLocal() << std::endl;
-        }
-    }
-    for (uint32_t i = 0; i < sta.GetN(); i++) {
-        Ptr<Ipv4> ipv4 = sta.Get(i)->GetObject<Ipv4>();
-        std::cout << "STA " << i << " addresses:" << std::endl;
-        for (uint32_t j = 0; j < ipv4->GetNInterfaces(); j++) {
-            std::cout << "  Interface " << j << ": " << ipv4->GetAddress(j, 0).GetLocal() << std::endl;
-        }
-    }
-
-    // ルーティングテーブル表示
-    std::cout << "\n=== Routing Tables ===" << std::endl;
-    for (uint32_t i = 0; i < server.GetN(); i++) {
-        Ptr<Ipv4> ipv4 = server.Get(i)->GetObject<Ipv4>();
-        std::cout << "Server " << i << " has routing protocol: " << (ipv4->GetRoutingProtocol() ? "YES" : "NO") << std::endl;
-    }
-    std::cout << "=====================\n" << std::endl;
 
     // アプリケーション設定
     // 受信アプリ（WiFi STA側）
@@ -260,13 +219,16 @@ int main(int argc, char *argv[]) {
 
     receiver->SaveStatisticsToFile(csvPath.str());
 
-    // サマリー出力
-    std::cout << "\n=== Simulation Summary ===" << std::endl;
+    // 設定を表示
+    std::cout << "\n=== Simulation Configuration ===" << std::endl;
     std::cout << "A-MPDU: " << (enableAmpdu ? "ON" : "OFF") << std::endl;
     std::cout << "EDCA: " << (enableEdca ? "ON" : "OFF") << std::endl;
+    std::cout << "Packet Size: " << packetSize << " bytes" << std::endl;
+    std::cout << "GOP Size: " << gopSize << std::endl;
     std::cout << "Distance: " << distance << " m" << std::endl;
-    std::cout << "Output: " << csvPath.str() << std::endl;
-    std::cout << "==========================\n" << std::endl;
+    std::cout << "Simulation Time: " << simulationTime << " s" << std::endl;
+    std::cout << "================================\n" << std::endl;
+
 
     Simulator::Destroy();
     return 0;
