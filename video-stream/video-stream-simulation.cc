@@ -32,9 +32,9 @@ int main(int argc, char *argv[]) {
     cmd.AddValue("outputDir", "Output directory for CSV files", outputDir);
     cmd.Parse(argc, argv);
 
-    LogComponentEnable("VideoFrame", LOG_LEVEL_INFO);
-    LogComponentEnable("UdpServer", LOG_LEVEL_INFO);
-    LogComponentEnable("UdpClient", LOG_LEVEL_INFO);
+    //LogComponentEnable("VideoFrame", LOG_LEVEL_INFO);
+    //LogComponentEnable("UdpServer", LOG_LEVEL_INFO);
+    //LogComponentEnable("UdpClient", LOG_LEVEL_INFO);
     Time::SetResolution(Time::NS);
 
     // 設定を表示
@@ -213,17 +213,16 @@ int main(int argc, char *argv[]) {
               << "_edca_" << edcaStrQos
               << "_d" << static_cast<int>(distance) << "m.csv";
 
-    g_qosLogFile.open(qosLogPath.str());
-    if (g_qosLogFile.is_open()) {
-        // ヘッダ行を書き込み
-        g_qosLogFile << "PhyRxTime,FrameID,FrameType,PacketIndex,TID,AccessCategory,IsAMPDU,AMPDURefNum" << std::endl;
-        std::cout << "QoS log file: " << qosLogPath.str() << std::endl;
-    }
+
+    AsciiTraceHelper asciiTraceHelper;
+    Ptr<OutputStreamWrapper> stream = asciiTraceHelper.CreateFileStream (outputDir + "/PhyRx.csv");
+    *stream->GetStream () << "PhyRxTime,FrameID,FrameType,PacketIndex,TID,AccessCategory,IsAMPDU,AMPDURefNum" << std::endl; //header
+
 
     // PHY 層の受信トレースを接続（STA 側のみ）
     Config::Connect("/NodeList/" + std::to_string(sta.Get(0)->GetId()) +
                     "/DeviceList/*/$ns3::WifiNetDevice/Phy/$ns3::WifiPhy/MonitorSnifferRx",
-                    MakeCallback(&PhyRxTrace));
+                    MakeBoundCallback(&PhyRxTrace, stream));
 
     // Flow Monitor設定
     FlowMonitorHelper flowmon;
@@ -260,7 +259,6 @@ int main(int argc, char *argv[]) {
             << "_d" << static_cast<int>(distance) << "m.csv";
 
     receiver->SaveStatisticsToFile(csvPath.str());
-    receiver->PrintStatistics();
 
     // サマリー出力
     std::cout << "\n=== Simulation Summary ===" << std::endl;
@@ -269,12 +267,6 @@ int main(int argc, char *argv[]) {
     std::cout << "Distance: " << distance << " m" << std::endl;
     std::cout << "Output: " << csvPath.str() << std::endl;
     std::cout << "==========================\n" << std::endl;
-
-    // QoS ログファイルを閉じる
-    if (g_qosLogFile.is_open()) {
-        g_qosLogFile.close();
-        std::cout << "QoS log saved to: " << qosLogPath.str() << std::endl;
-    }
 
     Simulator::Destroy();
     return 0;

@@ -4,13 +4,11 @@
 #include "ns3/qos-utils.h"
 #include "ns3/ampdu-subframe-header.h"
 
-using namespace ns3;
+namespace ns3 {
 
-// グローバル変数の定義
-std::ofstream g_qosLogFile;
 
 // PHY 層受信トレースコールバック
-void PhyRxTrace(std::string context, Ptr<const Packet> packet,
+void PhyRxTrace(Ptr<OutputStreamWrapper> stream, std::string context, Ptr<const Packet> packet,
                 uint16_t channelFreqMhz, WifiTxVector txVector,
                 MpduInfo aMpdu, SignalNoiseDbm signalNoise, uint16_t staId)
 {
@@ -49,17 +47,17 @@ void PhyRxTrace(std::string context, Ptr<const Packet> packet,
             packetIndex = vTag.GetPacketIndex();
         }
 
-        // ログファイルに記録
-        if (g_qosLogFile.is_open()) {
-            const char* frameTypeStr[] = {"I", "P", "B"};
-            g_qosLogFile << Simulator::Now().GetSeconds() << ","
-                        << frameId << ","
-                        << frameTypeStr[frameType] << ","
-                        << packetIndex << ","
-                        << (int)tid << ","
-                        << ac << ","
-                        << (isAmpdu ? "YES" : "NO") << ","
-                        << ampduRefNum << std::endl;
-        }
+        const char* frameTypeStr[] = {"I", "P", "B"};
+        *stream->GetStream ()
+            << Simulator::Now().GetSeconds() << ","
+            << frameId << ","
+            << frameTypeStr[frameType] << ","
+            << packetIndex << ","
+            << (int)tid << ","
+            << ac << ","
+            << (isAmpdu ? "YES" : "NO") << ","
+            << ampduRefNum << std::endl;
     }
+}
+
 }

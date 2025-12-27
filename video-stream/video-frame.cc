@@ -513,47 +513,6 @@ void VideoFrameReceiverApplication::CalculateStatistics() {
     }
 }
 
-void VideoFrameReceiverApplication::PrintStatistics() {
-    CalculateStatistics();
-
-    // CSV ヘッダー行
-    std::cout << "\nFrameID,Type,PacketRatio(%),FwdRef,BwdRef,RefStatus,EffectiveRatio(%),"
-              << "Latency(ms),WithinDeadline,FirstArrival(sec),LastArrival(sec)" << std::endl;
-
-    // データ行
-    for (auto& stat : m_frameStats) {
-        const char* typeStr[] = {"I", "P", "B"};
-
-        // 参照状態を判定
-        std::string refStatus;
-        if (stat.second.forwardRefFrameId == -1 && stat.second.backwardRefFrameId == -1) {
-            refStatus = "N/A";
-        } else if (stat.second.forwardRefLost && stat.second.backwardRefLost) {
-            refStatus = "BOTH_LOST";
-        } else if (stat.second.forwardRefLost) {
-            refStatus = "FWD_LOST";
-        } else if (stat.second.backwardRefLost) {
-            refStatus = "BWD_LOST";
-        } else {
-            refStatus = "OK";
-        }
-
-        std::string deadlineStatus = stat.second.withinDeadline ? "YES" : "NO";
-
-        std::cout << stat.first << ","
-                  << typeStr[stat.second.frameType] << ","
-                  << std::fixed << std::setprecision(1) << stat.second.packetReceptionRatio << ","
-                  << stat.second.forwardRefFrameId << ","
-                  << stat.second.backwardRefFrameId << ","
-                  << refStatus << ","
-                  << std::fixed << std::setprecision(1) << stat.second.effectiveReceptionRatio << ","
-                  << std::fixed << std::setprecision(2) << stat.second.latency << ","
-                  << deadlineStatus << ","
-                  << std::fixed << std::setprecision(4) << stat.second.firstPacketArrivalTime << ","
-                  << std::fixed << std::setprecision(4) << stat.second.lastPacketArrivalTime << std::endl;
-    }
-}
-
 void VideoFrameReceiverApplication::SaveStatisticsToFile(std::string filename) {
     CalculateStatistics();
 
